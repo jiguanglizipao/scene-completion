@@ -7,7 +7,8 @@
 using namespace cv;
 using namespace std;
 
-const int local_context_size = 80;
+static const int local_context_size = 80, inpaint_size = 3, mf_step = 5, mf_ksize = 5;
+const double const_k = .002;
 
 template <typename T> static T sqr(T x){return x*x;}
 static double ssd(const Mat &a, const Mat &b, const vector<Vec2i> &locs, const Vec2i &boff, Vec3b scale)
@@ -42,8 +43,6 @@ static vector<Vec2i> get_local_context(const Mat& small, const Mat& big)
 
 static pair<Vec2i, double> find_scene(const Mat &source, const Mat &match, const vector<Vec2i> locs)
 {
-    const int step = 1;
-    const int mf_ksize = 5;
     int nRows = match.rows;
     int nCols = match.cols;
     Vec2i mt = Vec2i(0, 0);
@@ -57,9 +56,9 @@ static pair<Vec2i, double> find_scene(const Mat &source, const Mat &match, const
     cvtColor(source, source_lab, cv::COLOR_RGB2Lab);
     cvtColor(match, match_lab, cv::COLOR_RGB2Lab);
 
-    for(int i = 0; i < nRows-locs.back()[0]; i+=step)
+    for(int i = 0; i < nRows-locs.back()[0]; i+=mf_step)
     {
-        for (int j = 0; j < nCols-locs.back()[1]; j+=step)
+        for (int j = 0; j < nCols-locs.back()[1]; j+=mf_step)
         {
             double context = ssd(source, match, locs, Vec2i(i, j), Vec3d(.81, .90, 1));
             double texture = ssd(source_grad, match_grad, locs, Vec2i(i, j), Vec3d(1, 1, 1));
@@ -136,7 +135,6 @@ private:
 public:
     GraphCut(const Mat &source, const Mat &match, const Mat &mask, const vector<Vec2i> &locs, const Vec2i &scene)
     {
-        const double const_k = .002;
         rows = source.rows;
         cols = source.cols;
         n = rows*cols;
@@ -243,6 +241,7 @@ public:
     }
 
 };
+
 int main(int argc, char** argv)
 {
     struct timeval start, end;
@@ -258,10 +257,10 @@ int main(int argc, char** argv)
     Mat mask = 255-imread(argv[3], cv::IMREAD_GRAYSCALE);
     threshold(mask, mask, 128, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
     
-    Mat dialation_mask;
-    dilate(mask, dialation_mask, getStructuringElement(MORPH_RECT, Size(local_context_size, local_context_size), Point(0, 0)));
+    Mat dilated_mask;
+    dilate(mask, dilated_mask, getStructuringElement(MORPH_RECT, Size(local_context_size, local_context_size), Point(0, 0)));
 
-    auto locs = get_local_context(mask, dialation_mask);
+    auto locs = get_local_context(mask, dilated_mask);
     
     auto scene_pair = find_scene(source, match, locs);
     auto scene = scene_pair.first;
@@ -286,19 +285,28 @@ int main(int argc, char** argv)
         }
     }
 
-    Mat destination = match.clone(), result;
+    Mat destination = match.clone(), possion, result, dilated_cut, eroded_cut, inpaint_mask = mask.clone();
+    dilate(cut, dilated_cut, getStructuringElement(MORPH_RECT, Size(inpaint_size, inpaint_size), Point(0, 0)));
+    erode(cut, eroded_cut, getStructuringElement(MORPH_RECT, Size(inpaint_size, inpaint_size), Point(0, 0)));
+
     for(int i=0;i<mask.rows;i++)
     {
         for(int j=0;j<mask.cols;j++)
         {
-            uint8_t* r = mask.ptr<uint8_t>(i);
-            Vec3b* s = source.ptr<Vec3b>(i);
+            const uint8_t* r = mask.ptr<uint8_t>(i);
+            const uint8_t* dc = dilated_cut.ptr<uint8_t>(i);
+            const uint8_t* ec = eroded_cut.ptr<uint8_t>(i);
+            uint8_t* im = inpaint_mask.ptr<uint8_t>(i);
+            const Vec3b* s = source.ptr<Vec3b>(i);
             Vec3b* d = destination.ptr<Vec3b>(i+scene[0]);
-            if(!r[j])d[j+scene[1]] = s[j];
+            if(!r[j]) d[j+scene[1]] = s[j];
+            if(dc[j] && !ec[j]) im[j] = 255; else im[j] = 0;
         }
     }
 
-    seamlessClone(match(Range(scene[0], scene[0]+source.rows), Range(scene[1], scene[1]+source.cols)), destination, cut.clone(), Point(scene[1]+(maxy+miny)/2, scene[0]+(maxx+minx)/2), result, NORMAL_CLONE);
+    seamlessClone(match(Range(scene[0], scene[0]+source.rows), Range(scene[1], scene[1]+source.cols)), destination, cut.clone(), Point(scene[1]+(maxy+miny)/2, scene[0]+(maxx+minx)/2), possion, NORMAL_CLONE);
+
+    inpaint(possion(Range(scene[0], scene[0]+source.rows), Range(scene[1], scene[1]+source.cols)), inpaint_mask, result, 2*inpaint_size+1, INPAINT_NS);
 
     gettimeofday(&end, NULL);
     printf("time %.6lf\n", double(end.tv_sec-start.tv_sec)+1e-6*double(end.tv_usec-start.tv_usec));
@@ -306,14 +314,18 @@ int main(int argc, char** argv)
     imshow("source", source);
     imshow("match", match);
     imshow("mask", mask);
-    imshow("dialation_mask", dialation_mask);
+    imshow("dilated_mask", dilated_mask);
     imshow("cut", cut);
+    imshow("inpaint_mask", inpaint_mask);
     imshow("destination", destination);
-    imshow("result", result(Range(scene[0], scene[0]+source.rows), Range(scene[1], scene[1]+source.cols)));
-    imwrite("dialation_mask.jpg", dialation_mask);
+    imshow("possion", possion(Range(scene[0], scene[0]+source.rows), Range(scene[1], scene[1]+source.cols)));
+    imshow("result", result);
+    imwrite("dilated_mask.jpg", dilated_mask);
     imwrite("cut.jpg", cut);
+    imwrite("inpaint_mask.jpg", inpaint_mask);
     imwrite("destination.jpg", destination);
-    imwrite("result.jpg", result(Range(scene[0], scene[0]+source.rows), Range(scene[1], scene[1]+source.cols)));
+    imwrite("possion.jpg", possion(Range(scene[0], scene[0]+source.rows), Range(scene[1], scene[1]+source.cols)));
+    imwrite("result.jpg", result);
     waitKey(0);
     return 0;
 }
