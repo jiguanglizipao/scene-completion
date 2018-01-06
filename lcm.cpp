@@ -194,9 +194,10 @@ public:
 
         memset(b.data(), -1, b.size()*sizeof(int64_t));
         for(int x=0;x<rows;x++)
+        {
+            const double* s = ssd_grad.ptr<double>(x);
             for(int y=0;y<cols;y++)
             {
-                const double* s = ssd_grad.ptr<double>(x);
                 if(!dis[get(x, y)])
                     insert(n, get(x, y), INT32_MAX);
                 else if(!f[get(x, y)])
@@ -206,6 +207,7 @@ public:
                     insert(get(x, y), get(x+dx, y+dy), pow(const_k*dis[get(x,y)], 3)+fabs(s[y]));
                 }
             }
+        }
 //        Mat tmp(rows, cols, CV_16U);
 //        for(int i=0;i<rows;i++)
 //        {
@@ -272,9 +274,9 @@ int main(int argc, char** argv)
     int minx = INT_MAX, miny = INT_MAX, maxx = INT_MIN, maxy = INT_MIN;
     for(int i=0;i<cut.rows;i++)
     {
+        uint8_t* r = cut.ptr<uint8_t>(i);
         for(int j=0;j<cut.cols;j++)
         {
-            uint8_t* r = cut.ptr<uint8_t>(i);
             if(r[j] == 255)
             {
                 minx = min(minx,i);
@@ -291,14 +293,14 @@ int main(int argc, char** argv)
 
     for(int i=0;i<mask.rows;i++)
     {
+        const uint8_t* r = mask.ptr<uint8_t>(i);
+        const uint8_t* dc = dilated_cut.ptr<uint8_t>(i);
+        const uint8_t* ec = eroded_cut.ptr<uint8_t>(i);
+        uint8_t* im = inpaint_mask.ptr<uint8_t>(i);
+        const Vec3b* s = source.ptr<Vec3b>(i);
+        Vec3b* d = destination.ptr<Vec3b>(i+scene[0]);
         for(int j=0;j<mask.cols;j++)
         {
-            const uint8_t* r = mask.ptr<uint8_t>(i);
-            const uint8_t* dc = dilated_cut.ptr<uint8_t>(i);
-            const uint8_t* ec = eroded_cut.ptr<uint8_t>(i);
-            uint8_t* im = inpaint_mask.ptr<uint8_t>(i);
-            const Vec3b* s = source.ptr<Vec3b>(i);
-            Vec3b* d = destination.ptr<Vec3b>(i+scene[0]);
             if(!r[j]) d[j+scene[1]] = s[j];
             if(dc[j] && !ec[j]) im[j] = 255; else im[j] = 0;
         }
