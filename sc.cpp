@@ -60,14 +60,134 @@ static double ssd(const vector<double> &a, const vector<double> &b)
 
 extern double local_context_matching(const Mat &source_in, const Mat &match_in, const Mat &mask_in, Mat & result_out);
 
+struct maskStruct
+{
+    Mat img0, img1, res1, final;
+    Point point;
+    int drag, numpts, var, flag, flag1;
+    int minx,miny,maxx,maxy,lenx,leny;
+    Point pts[1024];
+    maskStruct(const Mat &src)
+    {
+        drag = 0;
+        numpts = 1024;
+        var = 0;
+        flag = 0;
+        flag1 = 0;
+        minx = INT_MAX; miny = INT_MAX; maxx = INT_MIN; maxy = INT_MIN;
+        img0 = src;
+        res1 = Mat::zeros(img0.size(),CV_8UC1);
+        final = Mat::zeros(img0.size(),CV_8UC3);
+    }
+};
+
+static void maskmouseHandler(int event, int x, int y, int, void *void_ms)
+{
+    maskStruct *ms = (maskStruct*)void_ms;
+    if (event == EVENT_LBUTTONDOWN && !ms->drag)
+    {
+        if(ms->flag1 == 0)
+        {
+            if(ms->var==0)
+                ms->img1 = ms->img0.clone();
+            ms->point = Point(x, y);
+            circle(ms->img1,ms->point,2,Scalar(0, 0, 255),-1, 8, 0);
+            ms->pts[ms->var] = ms->point;
+            ms->var++;
+            ms->drag  = 1;
+            if(ms->var>1)
+                line(ms->img1,ms->pts[ms->var-2], ms->point, Scalar(0, 0, 255), 2, 8, 0);
+
+            imshow("Source", ms->img1);
+        }
+    }
+
+    if (event == EVENT_LBUTTONUP && ms->drag)
+    {
+        imshow("Source", ms->img1);
+
+        ms->drag = 0;
+    }
+    if (event == EVENT_RBUTTONDOWN)
+    {
+        ms->flag1 = 1;
+        ms->img1 = ms->img0.clone();
+        for(int i = ms->var; i < ms->numpts ; i++)
+            ms->pts[i] = ms->point;
+
+        if(ms->var!=0)
+        {
+            const Point* pts3[1] = {&ms->pts[0]};
+            polylines( ms->img1, pts3, &ms->numpts,1, 1, Scalar(0,0,0), 2, 8, 0);
+        }
+
+        for(int i=0;i<ms->var;i++)
+        {
+            ms->minx = min(ms->minx,ms->pts[i].x);
+            ms->maxx = max(ms->maxx,ms->pts[i].x);
+            ms->miny = min(ms->miny,ms->pts[i].y);
+            ms->maxy = max(ms->maxy,ms->pts[i].y);
+        }
+        ms->lenx = ms->maxx - ms->minx;
+        ms->leny = ms->maxy - ms->miny;
+
+        imshow("Source", ms->img1);
+    }
+
+    if (event == EVENT_RBUTTONUP)
+    {
+        ms->flag = ms->var;
+
+        ms->final = Mat::zeros(ms->img0.size(),CV_8UC3);
+        ms->res1 = Mat::zeros(ms->img0.size(),CV_8UC1);
+        const Point* pts4[1] = {&ms->pts[0]};
+
+        fillPoly(ms->res1, pts4,&ms->numpts, 1, Scalar(255, 255, 255), 8, 0);
+        bitwise_and(ms->img0, ms->img0, ms->final,ms->res1);
+        imwrite("mask.png",ms->res1);
+        imshow("Source", ms->img1);
+        destroyWindow("Source");
+
+    }
+    if (event == EVENT_MBUTTONDOWN)
+    {
+        for(int i = 0; i < ms->numpts ; i++)
+        {
+            ms->pts[i].x=0;
+            ms->pts[i].y=0;
+        }
+        ms->var = 0;
+        ms->flag1 = 0;
+        ms->minx = INT_MAX; ms->miny = INT_MAX; ms->maxx = INT_MIN; ms->maxy = INT_MIN;
+        imshow("Source", ms->img0);
+        ms->drag = 0;
+    }
+}
+
 int main(int argc, char** argv)
 {
     struct timeval start, end;
     gettimeofday(&start, NULL);
-    if (argc != 5)
+    Mat source, mask;
+    if (argc == 5)
     {
-        printf("usage: %s <images List> <gists File> <source Image> <mask Image>\n", argv[0]);
-        return -1;
+        source = imread(argv[3], cv::IMREAD_COLOR);
+        mask = 255-imread(argv[4], cv::IMREAD_GRAYSCALE);
+    }
+    else if (argc == 4)
+    {
+        source = imread(argv[3], cv::IMREAD_COLOR);
+        maskStruct ms(source);
+        namedWindow("Source", WINDOW_AUTOSIZE);
+        setMouseCallback("Source", maskmouseHandler, &ms);
+        imshow("Source", ms.img0);
+        waitKey(0);
+        mask = ms.res1;
+    }
+    else
+    {
+        printf("usage: %s <images List> <gists File> <source Image> [mask Image]\n", argv[0]);
+        return EXIT_FAILURE;
     }
 
     vector<string> files;
@@ -75,8 +195,6 @@ int main(int argc, char** argv)
     for(string line; getline(fi, line);) files.push_back(line);
     fi.close();
 
-    Mat source = imread(argv[3], cv::IMREAD_COLOR);
-    Mat mask = 255-imread(argv[4], cv::IMREAD_GRAYSCALE);
     vector<double> source_gist = gist(source);
 
     vector<vector<double>> gists(files.size());
@@ -119,5 +237,5 @@ int main(int argc, char** argv)
 
     gettimeofday(&end, NULL);
     printf("time %.6lf\n", double(end.tv_sec-start.tv_sec)+1e-6*double(end.tv_usec-start.tv_usec));
-    return 0;
+    return EXIT_SUCCESS;
 }
