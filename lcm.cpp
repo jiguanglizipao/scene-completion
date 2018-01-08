@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <sys/time.h>
 #include <opencv2/opencv.hpp>
+#include "poisson/clone.h"
+
 using namespace cv;
 using namespace std;
 
@@ -344,9 +346,12 @@ double local_context_matching(const Mat &source_in, const Mat &match_in, const M
         }
     }
 
-    seamlessClone(match(Range(l_minx+scene[0], l_maxx+scene[0]), Range(l_miny+scene[1], l_maxy+scene[1])), destination, cut_small, Point(match.cols+l_miny+scene[1]+(maxy+miny)/2, match.rows+l_minx+scene[0]+(maxx+minx)/2), possion, NORMAL_CLONE);
+//    seamlessClone(match(Range(l_minx+scene[0], l_maxx+scene[0]), Range(l_miny+scene[1], l_maxy+scene[1])), destination, cut_small, Point(match.cols+l_miny+scene[1]+(maxy+miny)/2, match.rows+l_minx+scene[0]+(maxx+minx)/2), possion, NORMAL_CLONE);
 
-    inpaint(possion(Range(match.rows+scene[0], match.rows+scene[0]+source.rows), Range(match.cols+scene[1], match.cols+scene[1]+source.cols)), inpaint_mask, result, 2*inpaint_size+1, INPAINT_NS);
+//    inpaint(possion(Range(match.rows+scene[0], match.rows+scene[0]+source.rows), Range(match.cols+scene[1], match.cols+scene[1]+source.cols)), inpaint_mask, result, 2*inpaint_size+1, INPAINT_NS);
+
+    blend::seamlessClone(destination, match(Range(l_minx+scene[0], l_maxx+scene[0]), Range(l_miny+scene[1], l_maxy+scene[1])), cut_small, l_miny+match.cols+scene[1], l_minx+match.rows+scene[0], possion, blend::CLONE_FOREGROUND_GRADIENTS);
+    result = possion(Range(match.rows+scene[0], match.rows+scene[0]+source.rows), Range(match.cols+scene[1], match.cols+scene[1]+source.cols));
 
     gettimeofday(&end, NULL);
 //    printf("time %.6lf\n", double(end.tv_sec-start.tv_sec)+1e-6*double(end.tv_usec-start.tv_usec));
